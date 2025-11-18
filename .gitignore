@@ -22,4 +22,10 @@ ENV/
 # Docker
 .dockerignore
 
+# Data storage
+data/
+backend/data/
+*.pb
+*.gtfs-rt
+
 

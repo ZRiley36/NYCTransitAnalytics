@@ -41,10 +41,12 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nyc_transit
       - REDIS_URL=redis://redis:6379/0
+      - MTA_API_KEY=${MTA_API_KEY:-}
     depends_on:
       postgres:
         condition: service_healthy
