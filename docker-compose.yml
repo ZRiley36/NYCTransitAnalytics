@@ -47,6 +47,16 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/nyc_transit
       - REDIS_URL=redis://redis:6379/0
       - MTA_API_KEY=${MTA_API_KEY:-}
+      # Cloud Storage Configuration (optional)
+      - CLOUD_STORAGE_TYPE=${CLOUD_STORAGE_TYPE:-}
+      # AWS S3 Configuration
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      # Google Cloud Storage Configuration
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-}
+      - GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
       postgres:
         condition: service_healthy

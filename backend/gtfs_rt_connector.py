@@ -10,6 +10,7 @@ from enum import Enum
 
 import httpx
 from google.transit import gtfs_realtime_pb2
+from cloud_storage import CloudStorageManager
 
 
 class FeedType(str, Enum):
@@ -29,6 +30,7 @@ class GTFSRTConnector:
         poll_interval: int = 20,
         max_retries: int = 3,
         retry_delay: float = 5.0,
+        cloud_storage: Optional[CloudStorageManager] = None,
     ):
         """
         Initialize GTFS-RT Connector
@@ -39,6 +41,7 @@ class GTFSRTConnector:
             poll_interval: Polling interval in seconds (10-30s)
             max_retries: Maximum retry attempts
             retry_delay: Delay between retries in seconds
+            cloud_storage: Optional cloud storage manager for S3/GCS
         """
         self.api_key = api_key or os.getenv("MTA_API_KEY", "")
         self.storage_path = Path(storage_path)
@@ -47,6 +50,12 @@ class GTFSRTConnector:
         self.poll_interval = max(10, min(30, poll_interval))  # Clamp to 10-30s
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+
+
+        
+        
+        # Initialize cloud storage (optional)
+        self.cloud_storage = cloud_storage or CloudStorageManager.from_config()
         
         # NYC MTA GTFS-RT Feed URLs (requires API key)
         # Using subway feeds - can be extended for other lines
@@ -237,7 +246,7 @@ class GTFSRTConnector:
         feed_type: FeedType = FeedType.VEHICLE_POSITIONS,
     ) -> str:
         """
-        Save raw feed to local storage
+        Save raw feed to local storage and upload to cloud storage
         
         Args:
             feed_data: Raw feed bytes
@@ -254,6 +263,7 @@ class GTFSRTConnector:
         filepath.write_bytes(feed_data)
         
         # Also save parsed JSON for easier inspection
+        json_filepath = None
         try:
             parsed = self.parse_feed(feed_data, feed_type)
             json_filepath = self.storage_path / f"{feed_type.value}_{timestamp}.json"
@@ -261,6 +271,14 @@ class GTFSRTConnector:
         except Exception as e:
             # Log but don't fail if parsing fails
             print(f"Warning: Failed to parse feed for JSON export: {e}")
+        
+        # Upload to cloud storage (if enabled)
+        if self.cloud_storage.is_enabled():
+            try:
+                await self.cloud_storage.upload_pair(filepath, json_filepath)
+            except Exception as e:
+                # Log but don't fail if cloud upload fails
+                print(f"Warning: Failed to upload to cloud storage: {e}")
         
         return str(filepath)
     
@@ -321,5 +339,7 @@ class GTFSRTConnector:
     
     def get_stats(self) -> Dict[str, Any]:
         """Get connector statistics"""
-        return self.stats.copy()
+        stats = self.stats.copy()
+        stats["cloud_storage"] = self.cloud_storage.get_stats()
+        return stats
 
