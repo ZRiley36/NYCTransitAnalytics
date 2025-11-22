@@ -1,0 +1,4 @@
+# PySpark ETL Dependencies
+pyspark==3.5.0
+pyarrow==14.0.1
+

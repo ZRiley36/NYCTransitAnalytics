@@ -34,4 +34,7 @@ backend/data/
 *.pb
 *.gtfs-rt
 
+# Spark staging area
+data/staging/
+
 
