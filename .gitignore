@@ -9,6 +9,12 @@ venv/
 ENV/
 .venv
 
+# Python installation directories (if Python is installed in project root)
+# These are from Python installations and should not be committed
+Include/
+Lib/
+Scripts/
+
 # IDE
 .vscode/
 .idea/
@@ -21,5 +27,11 @@ ENV/
 
 # Docker
 .dockerignore
+
+# Data storage
+data/
+backend/data/
+*.pb
+*.gtfs-rt
 
 
