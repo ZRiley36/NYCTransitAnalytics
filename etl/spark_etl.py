@@ -13,7 +13,8 @@ Features:
 
 import os
 import sys
-from datetime import datetime
+import platform
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 from pyspark.sql import SparkSession
@@ -25,6 +26,12 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, 
     DoubleType, TimestampType, LongType
 )
+
+# For Windows workaround
+if platform.system() == "Windows":
+    import pandas as pd
+    import pyarrow.parquet as pq
+    import pyarrow as pa
 
 
 class GTFSRTETL:
@@ -50,14 +57,67 @@ class GTFSRTETL:
         self.staging_path = Path(staging_path)
         self.staging_path.mkdir(parents=True, exist_ok=True)
         
-        # Initialize Spark session
-        self.spark = SparkSession.builder \
-            .appName(app_name) \
-            .master(spark_master) \
-            .config("spark.sql.adaptive.enabled", "true") \
-            .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-            .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
-            .getOrCreate()
+        # Handle Windows HADOOP_HOME issue for local development
+        if platform.system() == "Windows":
+            hadoop_home = Path.home() / ".hadoop"
+            hadoop_bin = hadoop_home / "bin"
+            hadoop_bin.mkdir(parents=True, exist_ok=True)
+            
+            # Set HADOOP_HOME if not already set
+            if not os.environ.get("HADOOP_HOME"):
+                os.environ["HADOOP_HOME"] = str(hadoop_home)
+            
+            # Check for winutils.exe - required for Spark file operations on Windows
+            winutils_exe = hadoop_bin / "winutils.exe"
+            if not winutils_exe.exists():
+                print("=" * 70)
+                print("⚠️  winutils.exe not found!")
+                print("=" * 70)
+                print(f"Spark requires winutils.exe to write files on Windows.")
+                print(f"\nTo fix this, run:")
+                print(f"  py etl/download_winutils.py")
+                print(f"\nOr download manually:")
+                print(f"  1. Visit: https://github.com/cdarlint/winutils/tree/master/hadoop-3.3.6/bin")
+                print(f"  2. Download winutils.exe")
+                print(f"  3. Save it to: {winutils_exe}")
+                print("=" * 70)
+                print()
+                raise RuntimeError(
+                    f"winutils.exe is required for Spark on Windows. "
+                    f"Run 'py etl/download_winutils.py' to download it automatically, "
+                    f"or download from https://github.com/cdarlint/winutils/tree/master/hadoop-3.3.6/bin "
+                    f"and save to {winutils_exe}"
+                )
+        
+        # Initialize Spark session with Windows-specific configs
+        spark_config = {
+            "spark.sql.adaptive.enabled": "true",
+            "spark.sql.adaptive.coalescePartitions.enabled": "true",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.parquet.outputTimestampType": "TIMESTAMP_MILLIS",
+        }
+        
+        # Add Windows-specific configurations to avoid native Hadoop library issues
+        if platform.system() == "Windows":
+            # Set Hadoop configuration to avoid native library issues
+            os.environ.setdefault("HADOOP_HOME", str(Path.home() / ".hadoop"))
+            os.environ.setdefault("HADOOP_CONF_DIR", str(Path.home() / ".hadoop" / "etc" / "hadoop"))
+            
+            spark_config.update({
+                "spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version": "2",
+                "spark.hadoop.mapreduce.fileoutputcommitter.cleanup-failures.ignored": "true",
+                # Disable native IO to avoid UnsatisfiedLinkError on Windows  
+                "spark.hadoop.io.native.lib.available": "false",
+                # Force Java-based file system
+                "spark.hadoop.fs.defaultFS": "file:///",
+                "spark.hadoop.fs.file.impl": "org.apache.hadoop.fs.LocalFileSystem",
+            })
+        
+        builder = SparkSession.builder.appName(app_name).master(spark_master)
+        for key, value in spark_config.items():
+            builder = builder.config(key, value)
+        
+        self.spark = builder.getOrCreate()
         
         # Set log level to reduce noise
         self.spark.sparkContext.setLogLevel("WARN")
@@ -141,21 +201,43 @@ class GTFSRTETL:
         # Add ingestion timestamp
         normalized_df = normalized_df.withColumn(
             "ingestion_timestamp",
-            lit(datetime.utcnow()).cast(TimestampType())
+            lit(datetime.now(timezone.utc).replace(tzinfo=None)).cast(TimestampType())
         )
         
         # Write to Parquet staging area
         output_path = self.staging_path / "vehicle_positions"
         output_path.mkdir(parents=True, exist_ok=True)
         
-        # Partition by date for better query performance
-        normalized_df.write \
-            .mode("overwrite") \
-            .partitionBy("line") \
-            .parquet(str(output_path))
-        
-        print(f"✓ Processed {normalized_df.count()} vehicle positions")
-        print(f"✓ Written to: {output_path}")
+        # On Windows, use PyArrow directly to avoid native Hadoop library issues
+        if platform.system() == "Windows":
+            # Convert Spark DataFrame to Pandas and then write with PyArrow
+            pandas_df = normalized_df.toPandas()
+            
+            # Remove existing output directory
+            if output_path.exists():
+                import shutil
+                shutil.rmtree(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Write partitioned by line using PyArrow
+            for line_value in pandas_df['line'].dropna().unique():
+                line_path = output_path / f"line={line_value}"
+                line_path.mkdir(parents=True, exist_ok=True)
+                line_df = pandas_df[pandas_df['line'] == line_value]
+                line_table = pa.Table.from_pandas(line_df)
+                pq.write_table(line_table, line_path / "part-0.parquet")
+            
+            print(f"✓ Processed {len(pandas_df)} vehicle positions (written via PyArrow)")
+            print(f"✓ Written to: {output_path}")
+        else:
+            # Use Spark's native Parquet writer (works on Linux/Mac)
+            normalized_df.write \
+                .mode("overwrite") \
+                .partitionBy("line") \
+                .parquet(str(output_path))
+            
+            print(f"✓ Processed {normalized_df.count()} vehicle positions")
+            print(f"✓ Written to: {output_path}")
         
         return normalized_df
     
@@ -259,21 +341,43 @@ class GTFSRTETL:
         # Add ingestion timestamp
         normalized_df = normalized_df.withColumn(
             "ingestion_timestamp",
-            lit(datetime.utcnow()).cast(TimestampType())
+            lit(datetime.now(timezone.utc).replace(tzinfo=None)).cast(TimestampType())
         )
         
         # Write to Parquet staging area
         output_path = self.staging_path / "trip_updates"
         output_path.mkdir(parents=True, exist_ok=True)
         
-        # Partition by line for better query performance
-        normalized_df.write \
-            .mode("overwrite") \
-            .partitionBy("line") \
-            .parquet(str(output_path))
-        
-        print(f"✓ Processed {normalized_df.count()} trip update records")
-        print(f"✓ Written to: {output_path}")
+        # On Windows, use PyArrow directly to avoid native Hadoop library issues
+        if platform.system() == "Windows":
+            # Convert Spark DataFrame to Pandas and then write with PyArrow
+            pandas_df = normalized_df.toPandas()
+            
+            # Remove existing output directory
+            if output_path.exists():
+                import shutil
+                shutil.rmtree(output_path)
+            output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Write partitioned by line using PyArrow
+            for line_value in pandas_df['line'].dropna().unique():
+                line_path = output_path / f"line={line_value}"
+                line_path.mkdir(parents=True, exist_ok=True)
+                line_df = pandas_df[pandas_df['line'] == line_value]
+                line_table = pa.Table.from_pandas(line_df)
+                pq.write_table(line_table, line_path / "part-0.parquet")
+            
+            print(f"✓ Processed {len(pandas_df)} trip update records (written via PyArrow)")
+            print(f"✓ Written to: {output_path}")
+        else:
+            # Use Spark's native Parquet writer (works on Linux/Mac)
+            normalized_df.write \
+                .mode("overwrite") \
+                .partitionBy("line") \
+                .parquet(str(output_path))
+            
+            print(f"✓ Processed {normalized_df.count()} trip update records")
+            print(f"✓ Written to: {output_path}")
         
         return normalized_df
     
