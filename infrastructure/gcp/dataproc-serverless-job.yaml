@@ -1,0 +1,24 @@
+# Dataproc Serverless Spark Job Configuration
+
+runtimeConfig:
+  version: "2.1"
+  properties:
+    spark:spark.sql.adaptive.enabled: "true"
+    spark:spark.sql.adaptive.coalescePartitions.enabled: "true"
+    spark:spark.executor.memory: "4g"
+    spark:spark.executor.cores: "2"
+    spark:spark.driver.memory: "2g"
+
+mainPythonFileUri: "gs://${PROJECT_ID}-nyc-transit-code/spark_etl.py"
+
+pythonFileUris:
+  - "gs://${PROJECT_ID}-nyc-transit-code/spark_etl.py"
+
+args:
+  - "--raw-path"
+  - "gs://${PROJECT_ID}-nyc-transit-raw"
+  - "--staging-path"
+  - "gs://${PROJECT_ID}-nyc-transit-staging"
+  - "--feed-type"
+  - "all"
+

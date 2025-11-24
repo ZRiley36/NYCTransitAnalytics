@@ -1,0 +1,60 @@
+# Cloud Build configuration for CI/CD
+
+steps:
+  # Build and deploy backend API
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/nyc-transit-api:$SHORT_SHA', './backend']
+    id: 'build-api'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/nyc-transit-api:$SHORT_SHA']
+    id: 'push-api'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'nyc-transit-api'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/nyc-transit-api:$SHORT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-api'
+
+  # Build and deploy ingestion service
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'gcr.io/$PROJECT_ID/gtfs-rt-ingestion:$SHORT_SHA', './etl']
+    id: 'build-ingestion'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/gtfs-rt-ingestion:$SHORT_SHA']
+    id: 'push-ingestion'
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'gtfs-rt-ingestion'
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/gtfs-rt-ingestion:$SHORT_SHA'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-ingestion'
+
+substitutions:
+  _REGION: 'us-central1'
+
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'
+
