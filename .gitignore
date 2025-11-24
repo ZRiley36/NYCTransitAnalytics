@@ -34,4 +34,14 @@ backend/data/
 *.pb
 *.gtfs-rt
 
+# Spark staging area
+data/staging/
+
+# PySpark runtime files (JAR files and other runtime artifacts)
+share/
+*.jar
+
+# PySpark runtime files (JAR files extracted during execution)
+share/
+
 
