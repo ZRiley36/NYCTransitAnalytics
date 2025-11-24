@@ -1,0 +1,17 @@
+# Warehouse Loading Dependencies
+
+# Required for all warehouses
+pandas>=2.0.0
+pyarrow>=14.0.1
+
+# Amazon Redshift
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+boto3>=1.28.0
+
+# Google BigQuery
+google-cloud-bigquery[pandas]>=3.11.0
+
+# Snowflake
+snowflake-connector-python[pandas]>=3.5.0
+
